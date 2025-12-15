@@ -1,0 +1,371 @@
+اوکی، بریم یه **پروژه CRM** خفن ولی قابل‌اجرا برات تعریف کنیم 😄
+(فقط تعریف و بست‌پرکتیس، بدون کد، تا خودت بزنی.)
+
+---
+
+## اسم پروژه: **MiniCRM – Customer & Deals Management API**
+
+یک CRM مینیمال که اجازه می‌دهد:
+
+* مشتری‌ها را مدیریت کنی
+* برایشان کانتکت‌ها / تماس‌ها / تسک‌ها ثبت کنی
+* دیل‌ها (فرصت‌های فروش) را در pipeline مراحل مختلف جابجا کنی
+* همه‌چیز روی FastAPI + Clean Architecture + Alembic + PostgreSQL
+
+---
+
+## قابلیت‌ها (Scope پروژه)
+
+### 1. مدیریت مشتری (Customer)
+
+* ساخت مشتری جدید
+* ویرایش اطلاعات مشتری
+* آرشیو/غیرفعال کردن مشتری
+* لیست/فیلتر مشتری‌ها
+
+فیلدهای پیشنهادی:
+
+* `id (uuid)`
+* `name`
+* `email`
+* `phone`
+* `company_name` (اگر B2B نیست می‌تونی حذفش کنی)
+* `status` (مثلاً: NEW, ACTIVE, INACTIVE)
+* `created_at`, `updated_at`
+
+---
+
+### 2. کانتکت‌ها و فعالیت‌ها (Interactions / Activities)
+
+هر بار که با مشتری تماس می‌گیری/ایمیل می‌زنی/جلسه می‌گذاری، یک Activity ثبت می‌کنی.
+
+* ثبت Activity برای یک Customer:
+
+  * انواع:
+
+    * CALL
+    * EMAIL
+    * MEETING
+    * NOTE
+  * فیلدها:
+
+    * `id`
+    * `customer_id`
+    * `type`
+    * `subject`
+    * `description`
+    * `created_at`
+    * `created_by_user_id` (اختیاری اگر user management داشته باشی)
+
+* API:
+
+  * `POST /v1/customers/{customer_id}/activities`
+  * `GET /v1/customers/{customer_id}/activities` (لیست history مشتری)
+
+---
+
+### 3. مدیریت دیل‌ها (Deals / Opportunities)
+
+نمایش pipeline ساده فروش:
+
+* هر Deal متعلق به یک Customer است.
+* یک stage دارد (مثلاً: NEW, CONTACTED, PROPOSAL, WON, LOST)
+* یک مبلغ تخمینی دارد.
+
+فیلدها:
+
+* `id`
+* `customer_id`
+* `title`
+* `amount`
+* `stage` (enum/text)
+* `expected_close_date` (اختیاری)
+* `created_at`
+
+APIها:
+
+* `POST /v1/deals`
+* `GET /v1/deals` + فیلتر بر اساس stage
+* `GET /v1/deals/{id}`
+* `PATCH /v1/deals/{id}` (تغییر title/amount/expected_close_date)
+* `POST /v1/deals/{id}/move-stage`
+
+  * body: `{ new_stage }`
+  * اینجا قوانین بیزنسی گذاشتی خیلی خوبه (مثلاً ممنوعیت برگشتن از WON به PROPOSAL مگر با دلیل و event).
+
+---
+
+### 4. Task / Reminder (اختیاری ولی باحال)
+
+برای مشتری یا Deal تسک تعریف کنی، مثلاً:
+
+* فردا ساعت ۱۱ به فلانی زنگ بزن
+* دوشنبه پروپوزال بفرست
+
+فیلدها:
+
+* `id`
+* `customer_id` یا `deal_id`
+* `title`
+* `due_date`
+* `status` (PENDING, DONE, CANCELED)
+* `created_at`
+
+APIها:
+
+* `POST /v1/tasks`
+* `GET /v1/tasks?status=PENDING&due_before=...`
+* `POST /v1/tasks/{id}/complete`
+
+---
+
+## طراحی دیتابیس (Schema پیشنهادی)
+
+### جدول‌ها
+
+1. `customers`
+2. `activities`
+3. `deals`
+4. `tasks`
+5. (اختیاری: `users` برای owner/assigned_to)
+
+روابط:
+
+* `customers (1) —— (N) activities`
+* `customers (1) —— (N) deals`
+* `customers (1) —— (N) tasks`
+  (و در صورت نیاز `deals (1) —— (N) tasks`)
+
+---
+
+## ساختار پوشه‌ها (Clean Architecture)
+
+همان الگوی قبل، ولی این بار با بافت CRM:
+
+```text
+src/
+  domain/
+    entities/
+      customer.py
+      activity.py
+      deal.py
+      task.py
+    repositories/
+      customer.py      # ICustomerRepository
+      activity.py
+      deal.py
+      task.py
+    unit_of_work.py
+    errors.py          # Domain exceptions (CustomerNotFound, InvalidStage, ...)
+  
+  application/
+    services/
+      customer_service.py   # create/update/archive
+      activity_service.py   # add activity
+      deal_service.py       # create/move_stage
+      task_service.py       # create/complete
+    dto/                    # اختیاری
+  
+  infrastructure/
+    db/
+      base.py
+      session.py
+      models/
+        customer.py
+        activity.py
+        deal.py
+        task.py
+    repositories/
+      customer_sqlalchemy.py
+      activity_sqlalchemy.py
+      deal_sqlalchemy.py
+      task_sqlalchemy.py
+    unit_of_work.py         # SQLAlchemyUnitOfWork
+  
+  presentation/
+    api/
+      v1/
+        routes_customers.py
+        routes_activities.py
+        routes_deals.py
+        routes_tasks.py
+      schemas/              # Pydantic models برای request/response
+    dependencies.py
+    main.py
+
+alembic/
+  versions/
+  env.py
+```
+
+---
+
+## قوانین بیزنسی (چی توی Domain باشه؟)
+
+### Customer
+
+* ایمیل، اگر داده شد، باید valid باشد.
+* status فقط از مجموعه‌ی مشخص باشد (NEW/ACTIVE/INACTIVE).
+* متدها:
+
+  * `activate()`, `deactivate()`
+  * `can_be_deleted()` (مثلاً اگر deal فعال دارد، اجازه نداری حذفش کنی، فقط inactive کن)
+
+### Deal
+
+* stage فقط از مجموعه‌ی stageها باشد.
+* متد:
+
+  * `move_to_stage(new_stage: DealStage)`
+
+    * قوانین:
+
+      * از `LOST` یا `WON` شاید اجازه‌ی تغییر نداشته باشی.
+      * بعضی transitionها را ممنوع کن، تست بنویس.
+* `mark_as_won()`, `mark_as_lost()`
+
+  * شاید هنگام won شدن، یک Activity اتوماتیک اضافه شود (این را در Service مدیریت کن).
+
+### Task
+
+* `complete()` فقط اگر در وضعیت `PENDING` باشد.
+* نمی‌توانی Task با due_date در خیلی دور گذشته بسازی → خطای بیزنسی.
+
+---
+
+## API Endpointها (به‌صورت خلاصه)
+
+### Customers
+
+* `POST /v1/customers`
+* `GET /v1/customers`
+* `GET /v1/customers/{id}`
+* `PATCH /v1/customers/{id}`
+* `POST /v1/customers/{id}/archive`
+
+### Activities
+
+* `POST /v1/customers/{customer_id}/activities`
+* `GET /v1/customers/{customer_id}/activities`
+
+### Deals
+
+* `POST /v1/deals`
+* `GET /v1/deals?stage=PROPOSAL`
+* `GET /v1/deals/{id}`
+* `POST /v1/deals/{id}/move-stage`
+
+### Tasks
+
+* `POST /v1/tasks`
+* `GET /v1/tasks?status=PENDING&due_before=...`
+* `POST /v1/tasks/{id}/complete`
+
+---
+
+## Best Practices مخصوص این CRM
+
+### معماری و کد
+
+* **Domain بدون FastAPI و بدون SQLAlchemy.**
+* تمام قوانین:
+
+  * اعتبار stage
+  * تغییر وضعیت Deal
+  * فعال/غیرفعال کردن Customer
+    باید در Entityها باشد، نه توی route و نه توی repo.
+* Serviceها orchestration انجام دهند:
+
+  * مثال:
+
+    * `DealService.create_deal(...)` → UoW باز می‌کند → Customer را validate می‌کند → Deal entity می‌سازد → save → commit.
+
+### خطاها (Domain Exceptions)
+
+* `CustomerNotFound`
+* `DealNotFound`
+* `InvalidStageTransition`
+* `TaskAlreadyCompleted`
+* `CustomerHasActiveDeals`
+
+Presentation این‌ها را تبدیل کند به:
+
+* ۴۰۴ برای NotFound
+* ۴۰۰ یا ۴۲۲ برای InvalidTransition و Validation
+
+### تست
+
+* Unit:
+
+  * تست حرکت stageهای Deal
+  * تست قوانین حذف/غیرفعال‌سازی Customer
+  * تست تکمیل Task
+* Service تست:
+
+  * با mock uow، مطمئن شو که commit درست صدا می‌خورد.
+* Integration:
+
+  * repo + DB واقعی (Postgres) با Alembic migrations اجرا شده.
+
+---
+
+## Alembic – چی‌کار باید بکنی؟
+
+### ۱) طراحی اولیه Schema
+
+نسخه‌ی اول migration:
+
+* ایجاد جدول‌های:
+
+  * `customers`
+  * `activities`
+  * `deals`
+  * `tasks`
+* تعریف FKها و indexهای مهم:
+
+  * `idx_activities_customer_id`
+  * `idx_deals_customer_id`
+  * `idx_tasks_due_date`
+
+### ۲) Naming Convention
+
+روی `MetaData` naming convention بگذار (برای pk, fk, ix, uq)
+تا Alembic اسم constraintها واضح بگذارد و drop/alter راحت شود.
+
+### ۳) روند تغییرات
+
+هر وقت مدل SQLAlchemy عوض شد:
+
+* `alembic revision --autogenerate -m "add task status index"`
+* فایل migration را دستی چک کن
+* `alembic upgrade head`
+
+### ۴) سناریوهای Migration محتمل
+
+* اضافه‌کردن field جدید به `customers` مثل `source` (مثلاً از کجا آمده: website, referral)
+* تغییر enum stageهای Deal (مثلاً افزودن `NEGOTIATION`)
+  → این یکی migration حساس‌تری می‌خواهد.
+
+---
+
+## Definition of Done برای MiniCRM
+
+وقتی بگی «این نسخه ۱ هست و سالمه»، باید:
+
+* همه‌ی endpointهای تعریف‌شده کار کنند.
+* منطق stageهای Deal با تست پوشش داده شده باشد.
+* حذف/غیرفعال‌سازی Customer با قوانین بیزنسی تست شده باشد.
+* Alembic از صفر تا head بدون خطا اجرا شود.
+* README توضیح دهد:
+
+  * `DATABASE_URL` چطوری ست می‌شود
+  * چطور migrations را اجرا کنی
+  * چطور تست‌ها را اجرا کنی
+
+---
+
+اگر دوست داشتی، قدم بعدی می‌تونم همین تعریف CRM رو تبدیل کنم به **لیست تسک‌های مرحله‌به‌مرحله** (Day 1, Day 2, …) که دقیقاً بگه: اول چی رو بساز، بعد چی رو.
+
+
+همه کد ها کاملا داکیومنت بشه کامل کامل داکیومنت 
+scalar کانفیگ و کاملا داکیومنت شده باشه 
